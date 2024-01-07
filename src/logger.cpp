@@ -6,7 +6,7 @@ Logger::Logger() {
         this->ColorMsg = reinterpret_cast<ColorMsg_t>(GetProcAddress(tier0, "?ConColorMsg@@YAXABVColor@@PBDZZ"));
     }
 
-#ifdef DEBUG
+#ifndef NDEBUG
     AllocConsole();
     FILE* dummy = nullptr;
     freopen_s(&dummy, "CONOUT$", "w", stdout);
@@ -18,7 +18,7 @@ Logger::Logger() {
     GetConsoleScreenBufferInfoEx(consoleHandle, &consoleInfo);
     consoleInfo.ColorTable[7] = LOG_COLOR.ToBGR();
     SetConsoleScreenBufferInfoEx(consoleHandle, &consoleInfo);
-#endif //_WIN32
+#endif // NDEBUG
 }
 
 Logger::~Logger() {
