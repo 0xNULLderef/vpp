@@ -1,6 +1,6 @@
 #include <cstring>
 #include <stdexcept>
-#include "plug.hpp"
+#include "vpp.hpp"
 #include "singleton.hpp"
 #include "logger.hpp"
 
@@ -56,15 +56,15 @@ class Entry : public IServerPluginCallbacks, public Singleton<Entry> {
 };
 
 bool Entry::Load(CreateInterfaceFn interfaceFactory, CreateInterfaceFn gameServerFactory) {
-    return Plug::Instance()->Load();
+    return VPP::Instance()->Load();
 }
 
 void Entry::Unload() {
-    return Plug::Instance()->Unload();
+    return VPP::Instance()->Unload();
 }
 
 const char* Entry::GetPluginDescription() {
-    return Plug::Instance()->Description();
+    return VPP::Instance()->Description();
 }
 
 void Entry::Pause() { }

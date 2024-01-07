@@ -1,13 +1,13 @@
-#ifndef PLUG_HPP
-#define PLUG_HPP
+#ifndef VPP_HPP
+#define VPP_HPP
 
 #include "singleton.hpp"
 #include "detour.hpp"
 #include <vector>
 
-class Plug : public Singleton<Plug> {
+class VPP : public Singleton<VPP> {
 public:
-    Plug();
+    VPP();
 
     bool Load();
     void Unload();
@@ -17,4 +17,4 @@ private:
     std::vector<Memory::DetourBase*> detours;
 };
 
-#endif // PLUG_HPP
+#endif // VPP_HPP

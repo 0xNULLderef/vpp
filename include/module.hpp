@@ -7,7 +7,7 @@
 
 namespace Memory {
     typedef HMODULE ModuleHandle;
-    typedef std::span<uint8_t> ModuleSpan;
+    typedef std::span<std::byte> ModuleSpan;
 
     struct Module {
         ModuleHandle handle;

@@ -29,8 +29,8 @@ namespace Memory {
                         modulePath.stem().string(),
                         Module(
                             modules[i],
-                            std::span<uint8_t>(
-                                reinterpret_cast<uint8_t*>(moduleInfo.lpBaseOfDll),
+                            std::span<std::byte>(
+                                reinterpret_cast<std::byte*>(moduleInfo.lpBaseOfDll),
                                 static_cast<size_t>(moduleInfo.SizeOfImage)
                             )
                         )
