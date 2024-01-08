@@ -3,6 +3,7 @@
 #include <immintrin.h>
 #include <sstream>
 #include <vector>
+#include "logger.hpp"
 
 namespace Memory {
     static constexpr auto MASK_FULL = std::byte { 0xFF };
@@ -19,7 +20,7 @@ namespace Memory {
                     this->bytes.push_back(std::byte { 0 });
                     this->mask.push_back(MASK_EMPTY);
                 } else {
-                    this->bytes.push_back(std::byte { static_cast<uint8_t>(std::stoul(characterGroup, nullptr, 16)) });
+                    this->bytes.push_back(std::byte { static_cast<std::uint8_t>(std::stoul(characterGroup, nullptr, 16)) });
                     this->mask.push_back(MASK_FULL);
                 }
             }
@@ -53,10 +54,10 @@ namespace Memory {
         Memory::Location Scan(const std::span<std::byte> target, std::string pattern, std::intptr_t offset) override {
             const ScanData data(pattern);
 
-            const auto locationMaskFirst = _mm256_set1_epi8(static_cast<uint8_t>(data.bytes[data.locationIndexFirst]));
-            const auto locationMaskLast = _mm256_set1_epi8(static_cast<uint8_t>(data.bytes[data.locationIndexLast]));
+            const auto locationMaskFirst = _mm256_set1_epi8(static_cast<std::uint8_t>(data.bytes[data.locationIndexFirst]));
+            const auto locationMaskLast = _mm256_set1_epi8(static_cast<std::uint8_t>(data.bytes[data.locationIndexLast]));
 
-            for(size_t blockOffset = 0; blockOffset < data.length - BLOCK_SIZE; blockOffset += BLOCK_SIZE) {
+            for(size_t blockOffset = 0; blockOffset < target.size() - BLOCK_SIZE; blockOffset += BLOCK_SIZE) {
                 const auto scanBlockFirst = _mm256_loadu_si256(reinterpret_cast<const Block*>(&target[blockOffset + data.locationIndexFirst]));
                 const auto scanBlockLast = _mm256_loadu_si256(reinterpret_cast<const Block*>(&target[blockOffset + data.locationIndexLast]));
 
@@ -69,7 +70,7 @@ namespace Memory {
                     for(size_t bitPosition = 0; bitPosition < sizeof(comparedMask) * 8; bitPosition++) {
                         if((comparedMask & (1 << bitPosition)) != 0) {
                             if(this->MaskedCompare(std::span { &target[blockOffset + bitPosition], data.length }, data)) {
-                                return reinterpret_cast<const uintptr_t>(&target[blockOffset + bitPosition + offset]);
+                                return reinterpret_cast<const std::uintptr_t>(&target[blockOffset + bitPosition + offset]);
                             }
                         }
                     }
@@ -107,11 +108,142 @@ namespace Memory {
             }
 
             return true;
-        } 
+        }
 
         using Block = __m256i;
         static constexpr size_t BLOCK_SIZE = sizeof(Block);
     };
+
+    class ScannerSSEImplementation : public ScannerImplementation {
+    public:
+        Memory::Location Scan(const std::span<std::byte> target, std::string pattern, std::intptr_t offset) override {
+            const ScanData data(pattern);
+
+            const auto locationMaskFirst = _mm_set1_epi8(static_cast<std::uint8_t>(data.bytes[data.locationIndexFirst]));
+            const auto locationMaskLast = _mm_set1_epi8(static_cast<std::uint8_t>(data.bytes[data.locationIndexLast]));
+
+            for(size_t blockOffset = 0; blockOffset < target.size() - BLOCK_SIZE; blockOffset += BLOCK_SIZE) {
+                const auto scanBlockFirst = _mm_loadu_si128(reinterpret_cast<const Block*>(&target[blockOffset + data.locationIndexFirst]));
+                const auto scanBlockLast = _mm_loadu_si128(reinterpret_cast<const Block*>(&target[blockOffset + data.locationIndexLast]));
+
+                const auto comparedMask = _mm_movemask_epi8(_mm_and_si128(
+                    _mm_cmpeq_epi8(scanBlockFirst, locationMaskFirst),
+                    _mm_cmpeq_epi8(scanBlockLast, locationMaskLast)
+                ));
+
+                if(comparedMask != 0) {
+                    for(size_t bitPosition = 0; bitPosition < sizeof(comparedMask) * 8; bitPosition++) {
+                        if((comparedMask & (1 << bitPosition)) != 0) {
+                            if(this->MaskedCompare(std::span { &target[blockOffset + bitPosition], data.length }, data)) {
+                                return reinterpret_cast<const std::uintptr_t>(&target[blockOffset + bitPosition + offset]);
+                            }
+                        }
+                    }
+                }
+            }
+
+            throw std::runtime_error("Sigsearch fail :P");
+        }
+
+    private:
+        inline bool MaskedCompare(const std::span<std::byte> target, const ScanData& data) {
+            // don't do first compares as integer / byte
+            // because the chance of both the target and our scan data being aligned the same way is low
+            // also usually our scan datavector should be aligned so it *shouldn't* cache miss *that* much
+            const auto blockSizeAligned = (target.size() & ~(BLOCK_SIZE - 1));
+            for(size_t blockOffset = 0; blockOffset < blockSizeAligned; blockOffset += BLOCK_SIZE) {
+                const auto targetBlock = _mm_loadu_si128(reinterpret_cast<const Block*>(&target[blockOffset]));
+                const auto bytesBlock = _mm_loadu_si128(reinterpret_cast<const Block*>(&data.bytes[blockOffset]));
+                const auto maskBlock = _mm_loadu_si128(reinterpret_cast<const Block*>(&data.mask[blockOffset]));
+
+                const auto compareMask = _mm_cmpeq_epi8(targetBlock, bytesBlock);
+
+                if(!_mm_testc_si128(compareMask, maskBlock)) {
+                    // early return when non-match hit
+                    return false;
+                }
+            }
+
+            // last few bytes get a normal comparison
+            // runs less than BLOCK_SIZE times so shouldn't eat cpu
+            for(size_t blockOffset = blockSizeAligned; blockOffset < target.size(); blockOffset++) {
+                if(target[blockOffset] != data.bytes[blockOffset] && data.mask[blockOffset] == MASK_FULL) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        using Block = __m128i;
+        static constexpr size_t BLOCK_SIZE = sizeof(Block);
+    };
+
+    // FIXME:
+    // class ScannerBasicImplementation : public ScannerImplementation {
+    // public:
+    //     Memory::Location Scan(const std::span<std::byte> target, std::string pattern, std::intptr_t offset) override {
+    //         const ScanData data(pattern);
+
+    //         // somewhat janky, but fills whole dword with byte
+    //         const auto locationMaskFirst = 0x01010101 * static_cast<const Block>(data.bytes[data.locationIndexFirst]);
+    //         const auto locationMaskLast = 0x01010101 * static_cast<const Block>(data.bytes[data.locationIndexLast]);
+
+    //         for(size_t blockOffset = 0; blockOffset < target.size() - BLOCK_SIZE; blockOffset += BLOCK_SIZE) {
+    //             LOG("block @ %p\n", &target[blockOffset]);
+    //             const auto scanBlockFirst = *reinterpret_cast<const Block*>(&target[blockOffset + data.locationIndexFirst]);
+    //             const auto scanBlockLast = *reinterpret_cast<const Block*>(&target[blockOffset + data.locationIndexLast]);
+
+    //             const auto comparedMask = (scanBlockFirst & locationMaskFirst) & (scanBlockLast & locationMaskLast);
+
+    //             if(comparedMask != 0) {
+    //                 for(size_t bitOffset = 0; bitOffset < sizeof(comparedMask); bitOffset += 8) {
+    //                     if((comparedMask & (0xFF << bitOffset)) != 0) {
+    //                         // bitOffset / 8 = bitOffset >> 3, we're counting bytes
+    //                         if(this->MaskedCompare(std::span { &target[blockOffset + (bitOffset >> 3)], data.length }, data)) {
+    //                             return reinterpret_cast<const std::uintptr_t>(&target[blockOffset + (bitOffset >> 3) + offset]);
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+
+    //         throw std::runtime_error("Sigsearch fail :P");
+    //     }
+
+    // private:
+    //     inline bool MaskedCompare(const std::span<std::byte> target, const ScanData& data) {
+    //         // don't do first compares as integer / byte
+    //         // because the chance of both the target and our scan data being aligned the same way is low
+    //         // also usually our scan datavector should be aligned so it *shouldn't* cache miss *that* much
+    //         const auto blockSizeAligned = (target.size() & ~(BLOCK_SIZE - 1));
+    //         for(size_t blockOffset = 0; blockOffset < blockSizeAligned; blockOffset += BLOCK_SIZE) {
+    //             const auto targetBlock = *reinterpret_cast<const Block*>(&target[blockOffset]);
+    //             const auto bytesBlock = *reinterpret_cast<const Block*>(&data.bytes[blockOffset]);
+    //             const auto maskBlock = *reinterpret_cast<const Block*>(&data.mask[blockOffset]);
+
+    //             const auto compareMask = targetBlock & bytesBlock;
+
+    //             if(compareMask != maskBlock) {
+    //                 // early return when non-match hit
+    //                 return false;
+    //             }
+    //         }
+
+    //         // last few bytes get a normal comparison
+    //         // runs less than BLOCK_SIZE times so shouldn't eat cpu
+    //         for(size_t blockOffset = blockSizeAligned; blockOffset < target.size(); blockOffset++) {
+    //             if(target[blockOffset] != data.bytes[blockOffset] && data.mask[blockOffset] == MASK_FULL) {
+    //                 return false;
+    //             }
+    //         }
+
+    //         return true;
+    //     }
+
+    //     using Block = std::uint32_t;
+    //     static constexpr size_t BLOCK_SIZE = sizeof(Block);
+    // };
 
     Memory::Location Scanner::Scan(const std::span<std::byte> target, std::string pattern, std::intptr_t offset) {
         return Scanner::Implementation().get()->Scan(target, pattern, offset);
@@ -121,7 +253,30 @@ namespace Memory {
         static std::unique_ptr<ScannerImplementation> implementation;
 
         if(implementation == nullptr) {
-            implementation = std::make_unique<ScannerAVXImplementation>();
+            int cpuid[4];
+
+#ifdef _WIN32
+            __cpuidex(cpuid, 1, 0);
+#else
+            asm volatile("cpuid"
+                : "=a" (cpuid[0]),
+                "=b" (cpuid[1]),
+                "=c" (cpuid[2]),
+                "=d" (cpuid[3])
+                : "0" (1), "2" (0)
+            );
+#endif
+
+            if(cpuid[2] & (1 << 28)) {
+                implementation = std::make_unique<ScannerAVXImplementation>();
+            // } else if(cpuid[3] & (1 << 26)) {
+            } else {
+                implementation = std::make_unique<ScannerSSEImplementation>();
+            }
+            // } else {
+            //     implementation = std::make_unique<ScannerBasicImplementation>();
+            // }
+            // implementation = std::make_unique<ScannerBasicImplementation>();
         }
 
         return implementation;

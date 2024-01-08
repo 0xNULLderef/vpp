@@ -52,3 +52,6 @@ HSCRIPT __fastcall VPP::ScriptGetGroundEntity(CBaseEntity* thisptr) {
     auto groundEntity = VPP::CBaseEntityGetGroundEntity(thisptr);
     return groundEntity != nullptr ? VPP::CBaseEntityGetScriptInstance(groundEntity) : nullptr;
 }
+
+VPP::CBaseEntityGetScriptInstance_t VPP::CBaseEntityGetScriptInstance = nullptr;
+VPP::CBaseEntityGetGroundEntity_t VPP::CBaseEntityGetGroundEntity = nullptr;
