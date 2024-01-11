@@ -179,72 +179,6 @@ namespace Memory {
         static constexpr size_t BLOCK_SIZE = sizeof(Block);
     };
 
-    // FIXME:
-    // class ScannerBasicImplementation : public ScannerImplementation {
-    // public:
-    //     Memory::Location Scan(const std::span<std::byte> target, std::string pattern, std::intptr_t offset) override {
-    //         const ScanData data(pattern);
-
-    //         // somewhat janky, but fills whole dword with byte
-    //         const auto locationMaskFirst = 0x01010101 * static_cast<const Block>(data.bytes[data.locationIndexFirst]);
-    //         const auto locationMaskLast = 0x01010101 * static_cast<const Block>(data.bytes[data.locationIndexLast]);
-
-    //         for(size_t blockOffset = 0; blockOffset < target.size() - BLOCK_SIZE; blockOffset += BLOCK_SIZE) {
-    //             LOG("block @ %p\n", &target[blockOffset]);
-    //             const auto scanBlockFirst = *reinterpret_cast<const Block*>(&target[blockOffset + data.locationIndexFirst]);
-    //             const auto scanBlockLast = *reinterpret_cast<const Block*>(&target[blockOffset + data.locationIndexLast]);
-
-    //             const auto comparedMask = (scanBlockFirst & locationMaskFirst) & (scanBlockLast & locationMaskLast);
-
-    //             if(comparedMask != 0) {
-    //                 for(size_t bitOffset = 0; bitOffset < sizeof(comparedMask); bitOffset += 8) {
-    //                     if((comparedMask & (0xFF << bitOffset)) != 0) {
-    //                         // bitOffset / 8 = bitOffset >> 3, we're counting bytes
-    //                         if(this->MaskedCompare(std::span { &target[blockOffset + (bitOffset >> 3)], data.length }, data)) {
-    //                             return reinterpret_cast<const std::uintptr_t>(&target[blockOffset + (bitOffset >> 3) + offset]);
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
-
-    //         throw std::runtime_error("Sigsearch fail :P");
-    //     }
-
-    // private:
-    //     inline bool MaskedCompare(const std::span<std::byte> target, const ScanData& data) {
-    //         // don't do first compares as integer / byte
-    //         // because the chance of both the target and our scan data being aligned the same way is low
-    //         // also usually our scan datavector should be aligned so it *shouldn't* cache miss *that* much
-    //         const auto blockSizeAligned = (target.size() & ~(BLOCK_SIZE - 1));
-    //         for(size_t blockOffset = 0; blockOffset < blockSizeAligned; blockOffset += BLOCK_SIZE) {
-    //             const auto targetBlock = *reinterpret_cast<const Block*>(&target[blockOffset]);
-    //             const auto bytesBlock = *reinterpret_cast<const Block*>(&data.bytes[blockOffset]);
-    //             const auto maskBlock = *reinterpret_cast<const Block*>(&data.mask[blockOffset]);
-
-    //             const auto compareMask = targetBlock & bytesBlock;
-
-    //             if(compareMask != maskBlock) {
-    //                 // early return when non-match hit
-    //                 return false;
-    //             }
-    //         }
-
-    //         // last few bytes get a normal comparison
-    //         // runs less than BLOCK_SIZE times so shouldn't eat cpu
-    //         for(size_t blockOffset = blockSizeAligned; blockOffset < target.size(); blockOffset++) {
-    //             if(target[blockOffset] != data.bytes[blockOffset] && data.mask[blockOffset] == MASK_FULL) {
-    //                 return false;
-    //             }
-    //         }
-
-    //         return true;
-    //     }
-
-    //     using Block = std::uint32_t;
-    //     static constexpr size_t BLOCK_SIZE = sizeof(Block);
-    // };
-
     Memory::Location Scanner::Scan(const std::span<std::byte> target, std::string pattern, std::intptr_t offset) {
         return Scanner::Implementation().get()->Scan(target, pattern, offset);
     }
@@ -269,14 +203,9 @@ namespace Memory {
 
             if(cpuid[2] & (1 << 28)) {
                 implementation = std::make_unique<ScannerAVXImplementation>();
-            // } else if(cpuid[3] & (1 << 26)) {
             } else {
                 implementation = std::make_unique<ScannerSSEImplementation>();
             }
-            // } else {
-            //     implementation = std::make_unique<ScannerBasicImplementation>();
-            // }
-            // implementation = std::make_unique<ScannerBasicImplementation>();
         }
 
         return implementation;
